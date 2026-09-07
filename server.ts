@@ -1,24 +1,10 @@
 import express from "express";
-import path from "path";
-import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-function getAI(customKey?: string) {
-  const apiKey = customKey || process.env.GEMINI_API_KEY;
-  if (apiKey) {
-    return new GoogleGenAI({
-      apiKey: apiKey.trim(),
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
-  }
-  return null;
+function getApiKey(customKey?: string): string {
+  return (customKey || process.env.GEMINI_API_KEY || "").trim();
 }
 
 async function startServer() {
@@ -67,11 +53,11 @@ async function startServer() {
         className = "12A1",
       } = req.body;
 
-      const ai = getAI();
+      const apiKey = getApiKey();
       const count = Math.max(1, Math.min(40, Number(questionCount) || 5));
       const duration = Number(durationMinutes) || 45;
 
-      if (!ai) {
+      if (!apiKey) {
         // High quality fallback generation when API key is not yet set
         return res.json({
           success: true,
@@ -149,75 +135,26 @@ Nhiệm vụ của bạn:
 Hãy sinh cấu trúc JSON hoàn chỉnh theo schema.`,
       });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: { parts },
-        config: {
-          systemInstruction,
-          temperature: 0.4,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: {
-                type: Type.STRING,
-                description: "Tiêu đề đề thi trắc nghiệm",
-              },
-              subject: {
-                type: Type.STRING,
-                description: "Tên môn học",
-              },
-              durationMinutes: {
-                type: Type.INTEGER,
-                description: "Thời gian làm bài thi (phút)",
-              },
-              description: {
-                type: Type.STRING,
-                description: "Mô tả nội dung trọng tâm và chuẩn đầu ra của đề thi",
-              },
-              questions: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    questionText: {
-                      type: Type.STRING,
-                      description: "Nội dung câu hỏi",
-                    },
-                    options: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          key: { type: Type.STRING, description: "A, B, C, hoặc D" },
-                          text: { type: Type.STRING, description: "Nội dung phương án" },
-                        },
-                        required: ["key", "text"],
-                      },
-                    },
-                    correctAnswer: {
-                      type: Type.STRING,
-                      description: "Đáp án đúng (A, B, C, hoặc D)",
-                    },
-                    explanation: {
-                      type: Type.STRING,
-                      description: "Lời giải chi tiết từng bước",
-                    },
-                    points: {
-                      type: Type.NUMBER,
-                      description: "Điểm số của câu hỏi",
-                    },
-                  },
-                  required: ["questionText", "options", "correctAnswer", "explanation"],
-                },
-              },
-            },
-            required: ["title", "subject", "questions"],
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+      const apiRes = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          systemInstruction: { parts: [{ text: systemInstruction }] },
+          generationConfig: {
+            temperature: 0.4,
+            responseMimeType: "application/json",
           },
-        },
+        }),
       });
 
-      const rawJson = response.text?.trim() || "{}";
+      if (!apiRes.ok) {
+        throw new Error(`Gemini API error ${apiRes.status}`);
+      }
+
+      const apiData = await apiRes.json();
+      const rawJson = apiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "{}";
       const parsedData = JSON.parse(rawJson);
 
       // Validate & post-process questions
